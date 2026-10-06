@@ -14,6 +14,7 @@ final class CanvasStore: ObservableObject {
     @Published var background: Background = .dots
     @Published var scale: CGFloat = 1
     @Published var textRequest: CGPoint?
+    @Published var isLoading = true
 
     var offset = CGPoint.zero
     var center = CGPoint.zero
@@ -21,14 +22,10 @@ final class CanvasStore: ObservableObject {
 
     private var bag = Set<AnyCancellable>()
     private let saveTrigger = PassthroughSubject<Void, Never>()
+    private var started = false
+    private var loaded = false
 
     init() {
-        if let s = Persistence.load() {
-            elements = s.elements
-            offset = s.offset
-            scale = s.scale
-            background = s.background ?? ((s.showGrid ?? true) ? .dots : .none)
-        }
         saveTrigger
             .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
             .sink { [weak self] in self?.persist() }
@@ -42,10 +39,48 @@ final class CanvasStore: ObservableObject {
         .store(in: &bag)
     }
 
+    func load() {
+        guard !started else { return }
+        started = true
+        Task {
+            let begin = Date()
+            let snapshot = await Task.detached(priority: .userInitiated) { Persistence.load() }.value
+            let remaining = 0.9 - Date().timeIntervalSince(begin)
+            if remaining > 0 { try? await Task.sleep(for: .seconds(remaining)) }
+            if let snapshot { apply(snapshot) }
+            loaded = true
+            isLoading = false
+        }
+    }
+
+    private func apply(_ s: Snapshot) {
+        elements = s.elements
+        offset = s.offset
+        scale = s.scale
+        background = s.background ?? ((s.showGrid ?? true) ? .dots : .none)
+    }
+
+    private func snapshot() -> Snapshot {
+        Snapshot(elements: elements, offset: offset, scale: scale, background: background, showGrid: nil)
+    }
+
     func requestSave() { saveTrigger.send() }
 
     func persist() {
-        Persistence.save(Snapshot(elements: elements, offset: offset, scale: scale, background: background, showGrid: nil))
+        guard loaded else { return }
+        Persistence.save(snapshot())
+    }
+
+    func exportData() -> Data {
+        (try? JSONEncoder().encode(snapshot())) ?? Data()
+    }
+
+    func restore(from data: Data) -> Bool {
+        guard let s = try? JSONDecoder().decode(Snapshot.self, from: data) else { return false }
+        commit()
+        apply(s)
+        resetView?()
+        return true
     }
 
     func commit() {

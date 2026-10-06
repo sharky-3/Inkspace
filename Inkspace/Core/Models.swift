@@ -21,7 +21,7 @@ enum Tool: String, CaseIterable, Identifiable {
     var isShape: Bool { [.line, .rectangle, .ellipse, .ruler].contains(self) }
 }
 
-enum Brush: String, CaseIterable, Identifiable, Codable {
+nonisolated enum Brush: String, CaseIterable, Identifiable, Codable {
     case fountain, ballpoint, brush, calligraphy, pencil, marker, highlighter, dashed, dotted
 
     var id: String { rawValue }
@@ -68,8 +68,8 @@ enum Brush: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-struct Element: Identifiable {
-    enum Kind: String, Codable { case stroke, line, rectangle, ellipse, polygon, ruler, text, image }
+nonisolated struct Element: Identifiable {
+    nonisolated enum Kind: String, Codable { case stroke, line, rectangle, ellipse, polygon, ruler, text, image }
 
     var id = UUID()
     var kind: Kind
@@ -86,7 +86,7 @@ struct Element: Identifiable {
     var rect: CGRect = .zero
 }
 
-extension Element {
+nonisolated extension Element {
     var font: UIFont {
         UIFont(descriptor: UIFontDescriptor(fontAttributes: [.family: fontFamily]), size: fontSize)
     }
@@ -120,7 +120,7 @@ extension Element {
     }
 }
 
-extension Element: Codable {
+nonisolated extension Element: Codable {
     enum CodingKeys: String, CodingKey {
         case id, kind, points, widths, color, width, brush, text, fontFamily, fontSize, imageData, rect
     }
@@ -162,7 +162,7 @@ extension Element: Codable {
     }
 }
 
-enum Background: String, CaseIterable, Identifiable, Codable {
+nonisolated enum Background: String, CaseIterable, Identifiable, Codable {
     case none, dots, lines, grid
 
     var id: String { rawValue }
