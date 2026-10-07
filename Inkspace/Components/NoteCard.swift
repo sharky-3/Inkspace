@@ -9,9 +9,20 @@ struct NoteCard: View {
             VStack(alignment: .leading, spacing: 14) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Dark.ground)
-                    Image(systemName: "scribble.variable")
+                    Image(systemName: note.kind?.icon ?? "scribble.variable")
                         .font(.system(size: 34, weight: .light))
                         .foregroundStyle(Dark.dim)
+
+                    if let kind = note.kind {
+                        Text(kind.title)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Dark.dim)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Dark.card.opacity(0.9), in: Capsule())
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                            .padding(10)
+                    }
                 }
                 .frame(height: 120)
                 VStack(alignment: .leading, spacing: 4) {

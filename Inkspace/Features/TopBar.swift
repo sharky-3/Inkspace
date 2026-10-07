@@ -18,11 +18,18 @@ struct TopBar: View {
 
             Spacer()
 
-            Text("\(Int(store.scale * 100))%")
-                .font(.system(size: 13, weight: .medium, design: .monospaced))
-                .padding(.horizontal, 14)
-                .frame(height: 56)
-                .glass(22)
+            HStack(spacing: 8) {
+                if let kind = store.fileKind {
+                    Image(systemName: kind.icon)
+                    Text(kind.title)
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                Text("\(Int(store.scale * 100))%")
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 56)
+            .glass(22)
 
             HStack(spacing: 2) {
                 IconButton(icon: store.background.icon) { cycleBackground() }

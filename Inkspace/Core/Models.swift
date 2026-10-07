@@ -1,5 +1,24 @@
 import UIKit
 
+nonisolated enum ImportedFileKind: String, Codable {
+    case pdf
+    case image
+
+    var icon: String {
+        switch self {
+        case .pdf: "doc.richtext"
+        case .image: "photo"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .pdf: "PDF"
+        case .image: "Image"
+        }
+    }
+}
+
 enum Tool: String, CaseIterable, Identifiable {
     case brush, eraser, move, line, rectangle, ellipse, ruler, template, text
 

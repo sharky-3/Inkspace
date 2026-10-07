@@ -36,6 +36,62 @@ nonisolated enum Persistence {
     static func remove(_ id: UUID) {
         try? fm.removeItem(at: file(id))
         try? fm.removeItem(at: backupDir(id))
+        removeDocument(id)
+    }
+
+    // MARK: - Imported files
+
+    private static var documentsDir: URL {
+        root.appendingPathComponent("Files", isDirectory: true)
+    }
+
+    private static func documentFile(_ id: UUID, _ fileExtension: String) -> URL {
+        let dir = documentsDir
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("\(id.uuidString).\(fileExtension.lowercased())")
+    }
+
+    static func saveDocument(_ id: UUID, data: Data, fileExtension: String) -> Bool {
+        let ext = fileExtension.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
+        guard !ext.isEmpty else { return false }
+
+        removeDocument(id)
+
+        do {
+            try data.write(to: documentFile(id, ext), options: .atomic)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    static func loadDocument(_ id: UUID) -> (data: Data, fileExtension: String)? {
+        let urls = (try? fm.contentsOfDirectory(
+            at: documentsDir,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        guard let url = urls.first(where: {
+            $0.deletingPathExtension().lastPathComponent.caseInsensitiveCompare(id.uuidString) == .orderedSame
+        }),
+        let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+
+        return (data, url.pathExtension.lowercased())
+    }
+
+    static func removeDocument(_ id: UUID) {
+        let urls = (try? fm.contentsOfDirectory(
+            at: documentsDir,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        for url in urls where url.deletingPathExtension().lastPathComponent.caseInsensitiveCompare(id.uuidString) == .orderedSame {
+            try? fm.removeItem(at: url)
+        }
     }
 
     private static func decode(_ url: URL) -> Snapshot? {

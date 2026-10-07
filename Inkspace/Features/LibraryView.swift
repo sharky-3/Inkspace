@@ -1,4 +1,6 @@
 import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
 
 struct LibraryView: View {
     @ObservedObject var library: Library
@@ -10,6 +12,8 @@ struct LibraryView: View {
     @State private var page = Page.all
     @State private var naming: Naming?
     @State private var draft = ""
+    @State private var importingFile = false
+    @State private var importFailed = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -26,6 +30,16 @@ struct LibraryView: View {
             TextField("Name", text: $draft)
             Button("Save") { commitName() }
             Button("Cancel", role: .cancel) { draft = "" }
+        }
+        .fileImporter(
+            isPresented: $importingFile,
+            allowedContentTypes: [.pdf, .image],
+            allowsMultipleSelection: false
+        ) { result in
+            importSelectedFile(result)
+        }
+        .alert("Couldn't import that file", isPresented: $importFailed) {
+            Button("OK", role: .cancel) {}
         }
     }
 
@@ -47,6 +61,42 @@ struct LibraryView: View {
         }
         naming = nil
         draft = ""
+    }
+
+    private func importSelectedFile(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result, let url = urls.first else { return }
+
+        let hasAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if hasAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        guard let fileData = try? Data(contentsOf: url) else {
+            importFailed = true
+            return
+        }
+
+        let ext = url.pathExtension.lowercased()
+        let supported = ext == "pdf" || UIImage(data: fileData) != nil
+        guard supported else {
+            importFailed = true
+            return
+        }
+
+        let title = url.deletingPathExtension().lastPathComponent
+        guard let id = library.importFile(
+            data: fileData,
+            title: title,
+            fileExtension: ext.isEmpty ? "bin" : ext,
+            in: folderID
+        ) else {
+            importFailed = true
+            return
+        }
+
+        open(id)
     }
 
     private var sidebar: some View {
@@ -74,13 +124,14 @@ struct LibraryView: View {
     private var grid: some View {
         VStack(alignment: .leading, spacing: 24) {
             HStack(spacing: 10) {
-                Text("Notes").foregroundStyle(Dark.dim)
+                Text("Notes & Files").foregroundStyle(Dark.dim)
                 if let id = folderID, let f = library.data.folders.first(where: { $0.id == id }) {
                     Text("/ \(f.name)").foregroundStyle(Color.white)
                 }
                 Spacer()
                 Chip(title: "New folder", selected: false) { naming = .folder }
                 Chip(title: "New note", selected: true) { open(library.newNote(in: folderID)) }
+                Chip(title: "Add file", selected: false) { importingFile = true }
             }
             .font(.system(size: 28, weight: .semibold))
             ScrollView {

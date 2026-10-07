@@ -6,6 +6,11 @@ struct NoteInfo: Identifiable, Codable {
     var title: String
     var folder: UUID?
     var updated = Date()
+
+    // nil means this is a normal Inkspace note.
+    // A value means this item is an imported file that can be annotated.
+    var kind: ImportedFileKind? = nil
+    var fileExtension: String? = nil
 }
 
 struct FolderInfo: Identifiable, Codable {
@@ -50,6 +55,25 @@ final class Library: ObservableObject {
         let note = NoteInfo(title: "Untitled", folder: folder)
         data.notes.append(note)
         return note.id
+    }
+
+    @discardableResult
+    func importFile(data fileData: Data, title: String, fileExtension: String, in folder: UUID?) -> UUID? {
+        let ext = fileExtension.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
+        let kind: ImportedFileKind = ext == "pdf" ? .pdf : .image
+        let item = NoteInfo(
+            title: title.isEmpty ? "Imported File" : title,
+            folder: folder,
+            kind: kind,
+            fileExtension: ext
+        )
+
+        guard Persistence.saveDocument(item.id, data: fileData, fileExtension: ext) else {
+            return nil
+        }
+
+        data.notes.append(item)
+        return item.id
     }
 
     func addFolder(_ name: String) {

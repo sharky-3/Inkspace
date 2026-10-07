@@ -1,4 +1,5 @@
 import UIKit
+import PDFKit
 
 final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
     private let store: CanvasStore
@@ -12,6 +13,12 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
     private var last = CGPoint.zero
     private var holdAnchor = CGPoint.zero
     private var holdWork: DispatchWorkItem?
+
+    // Cached rendering objects for an imported PDF/image.
+    private var importedData: Data?
+    private var importedPDF: PDFDocument?
+    private var importedImage: UIImage?
+    private var importedPageRects: [CGRect] = []
 
     private var scale: CGFloat {
         get { store.scale }
@@ -263,17 +270,113 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
 
     override func draw(_ rect: CGRect) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
-        ElementRenderer.dark = traitCollection.userInterfaceStyle == .dark
         ctx.translateBy(x: offset.x, y: offset.y)
         ctx.scaleBy(x: scale, y: scale)
-        drawBackground(ctx)
+
         let pad = 100 / scale
-        let visible = CGRect(x: -offset.x / scale, y: -offset.y / scale, width: bounds.width / scale, height: bounds.height / scale)
-            .insetBy(dx: -pad, dy: -pad)
-        for e in store.elements where e.bounds.intersects(visible) { ElementRenderer.draw(e, in: ctx) }
+        let visible = CGRect(
+            x: -offset.x / scale,
+            y: -offset.y / scale,
+            width: bounds.width / scale,
+            height: bounds.height / scale
+        ).insetBy(dx: -pad, dy: -pad)
+
+        drawBackground(ctx)
+        drawImportedDocument(ctx, visible: visible)
+
+        for e in store.elements where e.bounds.intersects(visible) {
+            ElementRenderer.draw(e, in: ctx)
+        }
         if let l = live { ElementRenderer.draw(l, in: ctx) }
         if store.tool == .move, let b = selectionBounds() { highlight(ctx, b.insetBy(dx: -6, dy: -6)) }
         if let m = marquee { highlight(ctx, m) }
+    }
+
+    private func syncImportedDocument() {
+        guard importedData != store.fileData else { return }
+
+        importedData = store.fileData
+        importedPDF = nil
+        importedImage = nil
+        importedPageRects = []
+
+        guard let data = store.fileData else { return }
+
+        if store.fileKind == .pdf {
+            importedPDF = PDFDocument(data: data)
+            guard let pdf = importedPDF, pdf.pageCount > 0 else {
+                importedPDF = nil
+                return
+            }
+
+            let pageWidth: CGFloat = 794
+            let gap: CGFloat = 32
+            var y: CGFloat = 40
+
+            for index in 0..<pdf.pageCount {
+                guard let page = pdf.page(at: index) else { continue }
+                let box = page.bounds(for: .mediaBox)
+                let ratio = max(box.height, 1) / max(box.width, 1)
+                let rect = CGRect(
+                    x: 40,
+                    y: y,
+                    width: pageWidth,
+                    height: pageWidth * ratio
+                )
+                importedPageRects.append(rect)
+                y += rect.height + gap
+            }
+        } else {
+            guard let image = UIImage(data: data) else { return }
+            importedImage = image
+
+            let maxWidth: CGFloat = 1000
+            let ratio = image.size.height / max(image.size.width, 1)
+            let width = min(maxWidth, max(image.size.width, 1))
+            let height = width * ratio
+
+            importedPageRects = [
+                CGRect(x: 40, y: 40, width: width, height: height)
+            ]
+        }
+    }
+
+    private func drawImportedDocument(_ ctx: CGContext, visible: CGRect) {
+        syncImportedDocument()
+
+        if let image = importedImage, let rect = importedPageRects.first, rect.intersects(visible) {
+            ctx.saveGState()
+            UIColor.white.setFill()
+            ctx.fill(rect)
+            image.draw(in: rect)
+            ctx.restoreGState()
+            return
+        }
+
+        guard let pdf = importedPDF else { return }
+
+        for (index, rect) in importedPageRects.enumerated() {
+            guard rect.intersects(visible), let page = pdf.page(at: index) else { continue }
+
+            ctx.saveGState()
+
+            // Give each PDF page a real paper background.
+            UIColor.white.setFill()
+            ctx.fill(rect)
+
+            let box = page.bounds(for: .mediaBox)
+            let sx = rect.width / max(box.width, 1)
+            let sy = rect.height / max(box.height, 1)
+
+            // PDFKit uses a bottom-left coordinate system. Flip it into
+            // the same top-left coordinate system used by the Inkspace canvas.
+            ctx.translateBy(x: rect.minX, y: rect.maxY)
+            ctx.scaleBy(x: sx, y: -sy)
+            ctx.translateBy(x: -box.minX, y: -box.minY)
+            page.draw(with: .mediaBox, to: ctx)
+
+            ctx.restoreGState()
+        }
     }
 
     private func drawBackground(_ ctx: CGContext) {
