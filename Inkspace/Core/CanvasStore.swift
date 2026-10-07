@@ -2,18 +2,27 @@ import UIKit
 import Combine
 
 final class CanvasStore: ObservableObject {
-    @Published var elements: [Element] = []
+    @Published var elements: [Element] = [] { didSet { version &+= 1 } }
     @Published var undoStack: [[Element]] = []
     @Published var redoStack: [[Element]] = []
     @Published var tool: Tool = .brush
     @Published var brush: Brush = .fountain {
-        didSet { restyle { if ![.text, .image, .ruler].contains($0.kind) { $0.brush = brush } } }
+        didSet {
+            restyle { if ![.text, .image, .ruler].contains($0.kind) { $0.brush = brush } }
+            if !isEditing { loadPreset() }
+        }
     }
     @Published var color: UIColor = Theme.palette[0] {
-        didSet { restyle { if $0.kind != .image { $0.color = color } } }
+        didSet {
+            restyle { if $0.kind != .image { $0.color = color } }
+            remember()
+        }
     }
     @Published var width: CGFloat = 3 {
-        didSet { restyle { if ![.text, .image].contains($0.kind) { $0.width = width } } }
+        didSet {
+            restyle { if ![.text, .image].contains($0.kind) { $0.width = width } }
+            remember()
+        }
     }
     @Published var fontFamily = Theme.fonts[0] {
         didSet { restyle { if $0.kind == .text { $0.fontFamily = fontFamily } } }
@@ -31,6 +40,7 @@ final class CanvasStore: ObservableObject {
     @Published var selection: Set<UUID> = []
 
     var noteID: UUID?
+    var version = 0
     var offset = CGPoint.zero
     var center = CGPoint.zero
     var resetView: (() -> Void)?
@@ -41,7 +51,7 @@ final class CanvasStore: ObservableObject {
 
     init() {
         saveTrigger
-            .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
+            .debounce(for: .seconds(2), scheduler: DispatchQueue.main)
             .sink { [weak self] in self?.persist() }
             .store(in: &bag)
         Publishers.Merge3(
@@ -51,6 +61,44 @@ final class CanvasStore: ObservableObject {
         )
         .sink { [weak self] in self?.requestSave() }
         .store(in: &bag)
+        loadPresets()
+        loadPreset()
+    }
+
+    private var presets: [Brush: BrushPreset] = [:]
+    private var syncing = false
+
+    private func remember() {
+        guard !syncing, !isEditing else { return }
+        presets[brush] = BrushPreset(color: color, width: width)
+        savePresets()
+    }
+
+    private func loadPreset() {
+        let p = presets[brush] ?? BrushPreset.fallback(brush)
+        syncing = true
+        color = p.color
+        width = p.width
+        syncing = false
+    }
+
+    private func savePresets() {
+        var raw: [String: [Double]] = [:]
+        for (b, p) in presets {
+            var r: CGFloat = 0, g: CGFloat = 0, bl: CGFloat = 0
+            p.color.getRed(&r, green: &g, blue: &bl, alpha: nil)
+            raw[b.rawValue] = [Double(r), Double(g), Double(bl), Double(p.width)]
+        }
+        UserDefaults.standard.set(raw, forKey: "brushPresets")
+    }
+
+    private func loadPresets() {
+        guard let raw = UserDefaults.standard.dictionary(forKey: "brushPresets") as? [String: [Double]] else { return }
+        for (key, v) in raw where v.count == 4 {
+            if let b = Brush(rawValue: key) {
+                presets[b] = BrushPreset(color: UIColor(red: CGFloat(v[0]), green: CGFloat(v[1]), blue: CGFloat(v[2]), alpha: 1), width: CGFloat(v[3]))
+            }
+        }
     }
 
     func open(_ id: UUID) {
@@ -65,12 +113,53 @@ final class CanvasStore: ObservableObject {
         offset = .zero
         scale = 0.8
         Task {
-            let snapshot = await Task.detached(priority: .userInitiated) { Persistence.load(id) }.value
+            let result = await Task.detached(priority: .userInitiated) { (Persistence.load(id), Persistence.loadDocument(id)) }.value
             guard noteID == id else { return }
-            if let snapshot { apply(snapshot) }
+            if let snapshot = result.0 {
+                apply(snapshot)
+            } else if let file = result.1 {
+                seed(id, file.data, file.fileExtension)
+            }
             loaded = true
             isLoading = false
         }
+    }
+
+    private func seed(_ id: UUID, _ data: Data, _ ext: String) {
+        let width: CGFloat = 700
+        var items: [Element] = []
+        if ext == "pdf", let provider = CGDataProvider(data: data as CFData), let doc = CGPDFDocument(provider) {
+            var y: CGFloat = 0
+            for n in 1...max(1, doc.numberOfPages) {
+                guard let page = doc.page(at: n) else { continue }
+                let box = page.getBoxRect(.mediaBox)
+                let turned = page.rotationAngle % 180 != 0
+                let ratio = turned ? box.width / box.height : box.height / box.width
+                var e = Element(kind: .pdf)
+                e.doc = id
+                e.page = n
+                e.rect = CGRect(x: 0, y: y, width: width, height: width * ratio)
+                items.append(e)
+                y = e.rect.maxY + 24
+            }
+        } else if let image = UIImage(data: data) {
+            let ratio = min(1, 1600 / max(image.size.width, image.size.height))
+            let size = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
+            let format = UIGraphicsImageRendererFormat.default()
+            format.scale = 1
+            let scaled = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+                image.draw(in: CGRect(origin: .zero, size: size))
+            }
+            var e = Element(kind: .image)
+            e.image = scaled
+            e.imageData = scaled.jpegData(compressionQuality: 0.85)
+            e.rect = CGRect(x: 0, y: 0, width: width, height: width * size.height / size.width)
+            items = [e]
+        }
+        guard !items.isEmpty else { return }
+        offset = CGPoint(x: (UIScreen.main.bounds.width - width * 0.8) / 2, y: 90)
+        scale = 0.8
+        elements = items
     }
 
     private func apply(_ s: Snapshot) {
@@ -187,6 +276,7 @@ final class CanvasStore: ObservableObject {
 
     func commit() {
         undoStack.append(elements)
+        if undoStack.count > 30 { undoStack.removeFirst() }
         redoStack.removeAll()
     }
 

@@ -43,10 +43,24 @@ enum Tool: String, CaseIterable, Identifiable {
 }
 
 nonisolated enum Brush: String, CaseIterable, Identifiable, Codable {
-    case fountain, ballpoint, brush, calligraphy, pencil, marker, highlighter, dashed, dotted
+    case fountain, ballpoint, brush, pencil, highlighter, marker, calligraphy, dashed, dotted
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
+
+    var icon: String {
+        switch self {
+        case .fountain: "pencil.tip"
+        case .ballpoint: "pencil.line"
+        case .brush: "paintbrush.pointed"
+        case .pencil: "pencil"
+        case .highlighter: "highlighter"
+        case .marker: "paintbrush"
+        case .calligraphy: "signature"
+        case .dashed: "minus"
+        case .dotted: "ellipsis"
+        }
+    }
 
     var widthScale: CGFloat {
         switch self {
@@ -62,7 +76,7 @@ nonisolated enum Brush: String, CaseIterable, Identifiable, Codable {
 
     var alpha: CGFloat {
         switch self {
-        case .highlighter: 0.3
+        case .highlighter: 0.35
         case .pencil: 0.75
         default: 1
         }
@@ -73,12 +87,13 @@ nonisolated enum Brush: String, CaseIterable, Identifiable, Codable {
     var pressureRange: ClosedRange<CGFloat> {
         switch self {
         case .fountain: 0.4...1.6
-        case .brush: 0.15...2.4
+        case .brush: 0.1...2.6
+        case .pencil: 0.5...1.5
         default: 1...1
         }
     }
 
-    var variable: Bool { self == .fountain || self == .brush || self == .calligraphy }
+    var variable: Bool { self == .fountain || self == .brush || self == .pencil || self == .calligraphy }
 
     func dash(_ w: CGFloat) -> [CGFloat] {
         switch self {
@@ -90,7 +105,7 @@ nonisolated enum Brush: String, CaseIterable, Identifiable, Codable {
 }
 
 nonisolated struct Element: Identifiable {
-    nonisolated enum Kind: String, Codable { case stroke, line, rectangle, ellipse, polygon, template, ruler, text, image }
+    nonisolated enum Kind: String, Codable { case stroke, line, rectangle, ellipse, polygon, template, ruler, text, image, pdf }
 
     var id = UUID()
     var kind: Kind
@@ -106,6 +121,8 @@ nonisolated struct Element: Identifiable {
     var imageData: Data?
     var rect: CGRect = .zero
     var template: ShapeTemplate = .triangle
+    var doc: UUID?
+    var page = 0
 }
 
 nonisolated extension Element {
@@ -117,7 +134,7 @@ nonisolated extension Element {
         switch kind {
         case .text:
             return CGRect(origin: rect.origin, size: (text as NSString).size(withAttributes: [.font: font]))
-        case .image:
+        case .image, .pdf:
             return rect
         default:
             guard let first = points.first else { return .zero }
@@ -135,6 +152,7 @@ nonisolated extension Element {
     }
 
     func hit(_ p: CGPoint, tol: CGFloat) -> Bool {
+        if kind == .pdf { return false }
         if kind == .stroke {
             return points.contains { hypot($0.x - p.x, $0.y - p.y) < tol + width }
         }
@@ -144,15 +162,35 @@ nonisolated extension Element {
 
 nonisolated extension Element: Codable {
     enum CodingKeys: String, CodingKey {
-        case id, kind, points, widths, color, width, brush, text, fontFamily, fontSize, imageData, rect, template
+        case id, kind, points, widths, color, width, brush, text, fontFamily, fontSize, imageData, rect, template, pts, wds, doc, page
+    }
+
+    static func pack(_ values: [Float]) -> Data {
+        values.withUnsafeBufferPointer { Data(buffer: $0) }
+    }
+
+    static func unpack(_ data: Data) -> [Float] {
+        let n = data.count / 4
+        return data.withUnsafeBytes { raw in
+            (0..<n).map { raw.loadUnaligned(fromByteOffset: $0 * 4, as: Float.self) }
+        }
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(kind: try c.decode(Kind.self, forKey: .kind))
         id = try c.decode(UUID.self, forKey: .id)
-        points = try c.decode([CGPoint].self, forKey: .points)
-        widths = try c.decode([CGFloat].self, forKey: .widths)
+        if let packed = try c.decodeIfPresent(Data.self, forKey: .pts) {
+            let f = Element.unpack(packed)
+            points = stride(from: 0, to: f.count - 1, by: 2).map { CGPoint(x: CGFloat(f[$0]), y: CGFloat(f[$0 + 1])) }
+        } else {
+            points = try c.decode([CGPoint].self, forKey: .points)
+        }
+        if let packed = try c.decodeIfPresent(Data.self, forKey: .wds) {
+            widths = Element.unpack(packed).map { CGFloat($0) }
+        } else {
+            widths = try c.decode([CGFloat].self, forKey: .widths)
+        }
         let rgba = try c.decode([CGFloat].self, forKey: .color)
         color = UIColor(red: rgba[0], green: rgba[1], blue: rgba[2], alpha: rgba[3])
         width = try c.decode(CGFloat.self, forKey: .width)
@@ -162,6 +200,8 @@ nonisolated extension Element: Codable {
         fontSize = try c.decode(CGFloat.self, forKey: .fontSize)
         rect = try c.decode(CGRect.self, forKey: .rect)
         template = try c.decodeIfPresent(ShapeTemplate.self, forKey: .template) ?? .triangle
+        doc = try c.decodeIfPresent(UUID.self, forKey: .doc)
+        page = try c.decodeIfPresent(Int.self, forKey: .page) ?? 0
         imageData = try c.decodeIfPresent(Data.self, forKey: .imageData)
         image = imageData.flatMap { UIImage(data: $0)?.preparingForDisplay() }
     }
@@ -170,8 +210,8 @@ nonisolated extension Element: Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
         try c.encode(kind, forKey: .kind)
-        try c.encode(points, forKey: .points)
-        try c.encode(widths, forKey: .widths)
+        try c.encode(Element.pack(points.flatMap { [Float($0.x), Float($0.y)] }), forKey: .pts)
+        try c.encode(Element.pack(widths.map { Float($0) }), forKey: .wds)
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         color.getRed(&r, green: &g, blue: &b, alpha: &a)
         try c.encode([r, g, b, a], forKey: .color)
@@ -182,6 +222,8 @@ nonisolated extension Element: Codable {
         try c.encode(fontSize, forKey: .fontSize)
         try c.encode(rect, forKey: .rect)
         try c.encode(template, forKey: .template)
+        try c.encodeIfPresent(doc, forKey: .doc)
+        try c.encode(page, forKey: .page)
         try c.encodeIfPresent(imageData, forKey: .imageData)
     }
 }
@@ -247,5 +289,16 @@ nonisolated enum ShapeTemplate: String, CaseIterable, Identifiable, Codable {
 
     func points(in r: CGRect) -> [CGPoint] {
         unit.map { CGPoint(x: r.minX + $0.x * r.width, y: r.minY + $0.y * r.height) }
+    }
+}
+
+struct BrushPreset {
+    var color: UIColor
+    var width: CGFloat
+
+    static func fallback(_ b: Brush) -> BrushPreset {
+        let widths: [Brush: CGFloat] = [.fountain: 3, .ballpoint: 2, .brush: 5, .pencil: 3, .highlighter: 5, .marker: 4]
+        let color = b == .highlighter ? UIColor(red: 1, green: 0.84, blue: 0.2, alpha: 1) : Theme.palette[0]
+        return BrushPreset(color: color, width: widths[b] ?? 3)
     }
 }

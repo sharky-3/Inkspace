@@ -20,18 +20,14 @@ enum ElementRenderer {
         ctx.setLineJoin(.round)
         ctx.setLineWidth(width)
         ctx.setLineDash(phase: 0, lengths: e.brush.dash(width))
+        if e.brush == .highlighter && !dark { ctx.setBlendMode(.multiply) }
 
         switch e.kind {
         case .stroke:
             if e.brush.variable {
-                for i in 1..<e.points.count {
-                    ctx.setLineWidth(segmentWidth(e, i))
-                    ctx.move(to: e.points[i - 1])
-                    ctx.addLine(to: e.points[i])
-                    ctx.strokePath()
-                }
+                ribbon(e, in: ctx)
             } else {
-                ctx.addLines(between: e.points)
+                ctx.addPath(curve(e.points))
                 ctx.strokePath()
             }
         case .line:
@@ -46,6 +42,8 @@ enum ElementRenderer {
             ctx.addLines(between: e.points)
             ctx.closePath()
             ctx.strokePath()
+        case .pdf:
+            drawPDF(e, in: ctx)
         case .template:
             ctx.addLines(between: e.template.points(in: span(e)))
             ctx.closePath()
@@ -57,6 +55,79 @@ enum ElementRenderer {
         case .image:
             e.image?.draw(in: e.rect)
         }
+    }
+
+    private static func curve(_ pts: [CGPoint], into path: CGMutablePath, move: Bool) {
+        guard let first = pts.first else { return }
+        if move { path.move(to: first) } else { path.addLine(to: first) }
+        guard pts.count > 2 else {
+            for p in pts.dropFirst() { path.addLine(to: p) }
+            return
+        }
+        for i in 1..<(pts.count - 1) {
+            let mid = CGPoint(x: (pts[i].x + pts[i + 1].x) / 2, y: (pts[i].y + pts[i + 1].y) / 2)
+            path.addQuadCurve(to: mid, control: pts[i])
+        }
+        path.addLine(to: pts[pts.count - 1])
+    }
+
+    private static func curve(_ pts: [CGPoint]) -> CGPath {
+        let path = CGMutablePath()
+        curve(pts, into: path, move: true)
+        return path
+    }
+
+    private static func ribbon(_ e: Element, in ctx: CGContext) {
+        let n = e.points.count
+        guard n > 1 else { return }
+        var left: [CGPoint] = []
+        var right: [CGPoint] = []
+        left.reserveCapacity(n)
+        right.reserveCapacity(n)
+        for i in 0..<n {
+            let a = e.points[max(i - 1, 0)], b = e.points[min(i + 1, n - 1)]
+            var dx = b.x - a.x, dy = b.y - a.y
+            let len = max(hypot(dx, dy), 0.0001)
+            dx /= len
+            dy /= len
+            let w = segmentWidth(e, i) / 2
+            let p = e.points[i]
+            left.append(CGPoint(x: p.x - dy * w, y: p.y + dx * w))
+            right.append(CGPoint(x: p.x + dy * w, y: p.y - dx * w))
+        }
+        ctx.setFillColor(ink(e.color).withAlphaComponent(e.brush.alpha).cgColor)
+        let path = CGMutablePath()
+        curve(left, into: path, move: true)
+        curve(Array(right.reversed()), into: path, move: false)
+        path.closeSubpath()
+        ctx.addPath(path)
+        ctx.fillPath()
+        for i in [0, n - 1] {
+            let r = segmentWidth(e, i) / 2
+            ctx.fillEllipse(in: CGRect(x: e.points[i].x - r, y: e.points[i].y - r, width: 2 * r, height: 2 * r))
+        }
+    }
+
+    private static var docs: [UUID: CGPDFDocument] = [:]
+
+    private static func pdfPage(_ id: UUID, _ number: Int) -> CGPDFPage? {
+        if docs[id] == nil,
+           let file = Persistence.loadDocument(id),
+           let provider = CGDataProvider(data: file.data as CFData),
+           let doc = CGPDFDocument(provider) {
+            docs[id] = doc
+        }
+        return docs[id]?.page(at: number)
+    }
+
+    private static func drawPDF(_ e: Element, in ctx: CGContext) {
+        ctx.setFillColor(UIColor.white.cgColor)
+        ctx.fill(e.rect)
+        guard let id = e.doc, let page = pdfPage(id, e.page) else { return }
+        ctx.translateBy(x: e.rect.minX, y: e.rect.maxY)
+        ctx.scaleBy(x: 1, y: -1)
+        ctx.concatenate(page.getDrawingTransform(.mediaBox, rect: CGRect(origin: .zero, size: e.rect.size), rotate: 0, preserveAspectRatio: true))
+        ctx.drawPDFPage(page)
     }
 
     private static func segmentWidth(_ e: Element, _ i: Int) -> CGFloat {

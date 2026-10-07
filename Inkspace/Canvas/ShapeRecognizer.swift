@@ -57,6 +57,33 @@ enum ShapeRecognizer {
         return CGPoint(x: axis(a.x, b.x, c.x, d.x), y: axis(a.y, b.y, c.y, d.y))
     }
 
+    static func keep(_ p: [CGPoint], _ eps: CGFloat) -> [Int] {
+        guard p.count > 2 else { return Array(p.indices) }
+        var marked = [Bool](repeating: false, count: p.count)
+        marked[0] = true
+        marked[p.count - 1] = true
+        var stack = [(0, p.count - 1)]
+        while let (s, e) = stack.popLast() {
+            var maxD: CGFloat = 0
+            var index = s
+            if e - s > 1 {
+                for i in (s + 1)..<e {
+                    let d = lineDistance(p[i], p[s], p[e])
+                    if d > maxD {
+                        maxD = d
+                        index = i
+                    }
+                }
+            }
+            if maxD > eps {
+                marked[index] = true
+                stack.append((s, index))
+                stack.append((index, e))
+            }
+        }
+        return p.indices.filter { marked[$0] }
+    }
+
     private static func bounds(_ p: [CGPoint]) -> CGRect {
         p.reduce(CGRect(origin: p[0], size: .zero)) { $0.union(CGRect(origin: $1, size: .zero)) }
     }

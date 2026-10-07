@@ -12,6 +12,17 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
     private var last = CGPoint.zero
     private var holdAnchor = CGPoint.zero
     private var holdWork: DispatchWorkItem?
+    private var cache: UIImage?
+    private var cacheKey: [CGFloat] = []
+    private var boxCache: [UUID: (Int, CGRect)] = [:]
+    private var lastScreen = CGPoint.zero
+    private var lastBox = CGRect.null
+    private var cacheVersion = -1
+    private var gestureSnap: UIImage?
+    private var snapScale: CGFloat = 1
+    private var snapOffset = CGPoint.zero
+    private var activeGestures = 0
+    private var lastTime: TimeInterval = 0
 
     private var scale: CGFloat {
         get { store.scale }
@@ -90,6 +101,7 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
     }
 
     @objc private func onPan(_ g: UIPanGestureRecognizer) {
+        trackGesture(g.state)
         let t = g.translation(in: self)
         offset.x += t.x
         offset.y += t.y
@@ -99,6 +111,7 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
     }
 
     @objc private func onPinch(_ g: UIPinchGestureRecognizer) {
+        trackGesture(g.state)
         let c = g.location(in: self)
         let w = world(c)
         scale = min(max(scale * g.scale, 0.02), 16)
@@ -108,10 +121,14 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
         if g.state == .ended { store.requestSave() }
     }
 
-    private func pressureWidth(_ t: UITouch) -> CGFloat {
+    private func pressureWidth(_ t: UITouch, speed: CGFloat = 0) -> CGFloat {
         let f = t.maximumPossibleForce > 0 ? t.force / t.maximumPossibleForce : 0.5
-        let range = store.brush.pressureRange
-        return store.width * store.brush.widthScale * (range.lowerBound + (range.upperBound - range.lowerBound) * f)
+        let b = store.brush
+        let r = b.pressureRange
+        var w = store.width * b.widthScale * (r.lowerBound + (r.upperBound - r.lowerBound) * f)
+        if b == .fountain || b == .brush { w *= max(0.55, 1 - speed / 3500) }
+        if b == .pencil { w *= 1 + 1.8 * (1 - t.altitudeAngle / (CGFloat.pi / 2)) }
+        return w
     }
 
     private func kind(_ t: Tool) -> Element.Kind {
@@ -125,7 +142,7 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
     }
 
     private func erase(at p: CGPoint) {
-        guard let i = store.elements.lastIndex(where: { $0.hit(p, tol: 10 / scale) }) else { return }
+        guard let i = store.elements.lastIndex(where: { box($0).insetBy(dx: -10 / scale, dy: -10 / scale).contains(p) && $0.hit(p, tol: 10 / scale) }) else { return }
         if !committed {
             store.commit()
             committed = true
@@ -158,14 +175,17 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
         guard let touch = touches.first(where: { $0.type == .pencil }) else { return }
         let p = world(touch.location(in: self))
         last = p
+        lastTime = touch.timestamp
         snapped = false
         let t = store.tool
         if t == .brush {
             let w = pressureWidth(touch)
             live = Element(kind: .stroke, points: [p, p], widths: [w, w], color: store.color, width: store.width, brush: store.brush)
             armHold(touch.location(in: self))
+            beginCache(touch.location(in: self))
         } else if t.isShape {
             live = Element(kind: kind(t), points: [p, p], color: store.color, width: store.width, brush: t == .ruler ? .ballpoint : store.brush, template: store.template)
+            beginCache(touch.location(in: self))
         } else if t == .eraser {
             erasing = true
             erase(at: p)
@@ -173,7 +193,7 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
             if let b = selectionBounds(), b.insetBy(dx: -8 / scale, dy: -8 / scale).contains(p) {
                 store.commit()
                 moving = true
-            } else if let e = store.elements.last(where: { $0.hit(p, tol: 8 / scale) }) {
+            } else if let e = store.elements.last(where: { box($0).insetBy(dx: -8 / scale, dy: -8 / scale).contains(p) && $0.hit(p, tol: 8 / scale) }) {
                 store.selection = [e.id]
                 store.commit()
                 moving = true
@@ -190,14 +210,20 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first(where: { $0.type == .pencil }) else { return }
+        var dirty = CGRect.null
         for c in event?.coalescedTouches(for: touch) ?? [touch] {
             let screen = c.location(in: self)
             let p = world(screen)
             if live?.kind == .stroke, !snapped {
-                let raw = pressureWidth(c)
+                let dt = c.timestamp - lastTime
+                let speed = dt > 0 ? hypot(screen.x - lastScreen.x, screen.y - lastScreen.y) / CGFloat(dt) : 0
+                lastTime = c.timestamp
+                let raw = pressureWidth(c, speed: speed)
                 let smoothed = (live?.widths.last ?? raw) * 0.7 + raw * 0.3
                 live?.points.append(p)
                 live?.widths.append(smoothed)
+                dirty = dirty.union(segmentBox(lastScreen, screen))
+                lastScreen = screen
                 if hypot(screen.x - holdAnchor.x, screen.y - holdAnchor.y) > 4 { armHold(screen) }
             } else if live != nil {
                 if !snapped || live?.kind == .line { live?.points[1] = p }
@@ -214,7 +240,16 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
             }
             last = p
         }
-        setNeedsDisplay()
+        if cache != nil {
+            if let l = live, l.kind != .stroke {
+                let nb = liveBox(l)
+                dirty = dirty.union(lastBox).union(nb)
+                lastBox = nb
+            }
+            setNeedsDisplay(dirty.isNull ? bounds : dirty)
+        } else {
+            setNeedsDisplay()
+        }
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -228,13 +263,31 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
 
     private func finish(save: Bool) {
         holdWork?.cancel()
-        if save, let l = live {
+        if save, var l = live {
+            if l.kind == .stroke { l = compact(l) }
+            let valid = cache != nil && cacheKey == currentKey && cacheVersion == store.version
             store.commit()
             store.elements.append(l)
+            if valid, let old = cache {
+                let format = UIGraphicsImageRendererFormat.default()
+                format.opaque = false
+                let done = l
+                cache = UIGraphicsImageRenderer(bounds: bounds, format: format).image { r in
+                    old.draw(in: bounds)
+                    traitCollection.performAsCurrent {
+                        ElementRenderer.dark = traitCollection.userInterfaceStyle == .dark
+                        r.cgContext.translateBy(x: offset.x, y: offset.y)
+                        r.cgContext.scaleBy(x: scale, y: scale)
+                        ElementRenderer.draw(done, in: r.cgContext)
+                    }
+                }
+                cacheVersion = store.version
+            }
         }
+        lastBox = .null
         live = nil
         if let m = marquee {
-            store.selection = Set(store.elements.filter { $0.bounds.intersects(m) }.map(\.id))
+            store.selection = Set(store.elements.filter { box($0).intersects(m) }.map(\.id))
         }
         marquee = nil
         moving = false
@@ -244,8 +297,116 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
         setNeedsDisplay()
     }
 
+    private var currentKey: [CGFloat] {
+        [scale, offset.x, offset.y, bounds.width, bounds.height,
+         CGFloat(traitCollection.userInterfaceStyle.rawValue),
+         CGFloat(Background.allCases.firstIndex(of: store.background) ?? 0)]
+    }
+
+    private func renderScene() -> UIImage {
+        let format = UIGraphicsImageRendererFormat.default()
+        format.opaque = false
+        return UIGraphicsImageRenderer(bounds: bounds, format: format).image { r in
+            traitCollection.performAsCurrent {
+                ElementRenderer.dark = traitCollection.userInterfaceStyle == .dark
+                r.cgContext.translateBy(x: offset.x, y: offset.y)
+                r.cgContext.scaleBy(x: scale, y: scale)
+                drawScene(r.cgContext)
+            }
+        }
+    }
+
+    private func trackGesture(_ state: UIGestureRecognizer.State) {
+        switch state {
+        case .began:
+            activeGestures += 1
+            if activeGestures == 1 {
+                snapScale = scale
+                snapOffset = offset
+                let valid = cache != nil && cacheKey == currentKey && cacheVersion == store.version
+                gestureSnap = valid ? cache : renderScene()
+            }
+        case .ended, .cancelled, .failed:
+            activeGestures = max(0, activeGestures - 1)
+            if activeGestures == 0 {
+                gestureSnap = nil
+                setNeedsDisplay()
+            }
+        default:
+            break
+        }
+    }
+
+    private func box(_ e: Element) -> CGRect {
+        var h = Hasher()
+        h.combine(e.kind)
+        h.combine(e.points.count)
+        h.combine(e.points.first?.x)
+        h.combine(e.points.first?.y)
+        h.combine(e.points.last?.x)
+        h.combine(e.points.last?.y)
+        h.combine(e.width)
+        h.combine(e.rect.minX)
+        h.combine(e.rect.minY)
+        h.combine(e.rect.width)
+        h.combine(e.text)
+        h.combine(e.fontSize)
+        h.combine(e.fontFamily)
+        let key = h.finalize()
+        if let hit = boxCache[e.id], hit.0 == key { return hit.1 }
+        let b = e.bounds
+        boxCache[e.id] = (key, b)
+        return b
+    }
+
+    private func beginCache(_ screen: CGPoint) {
+        lastScreen = screen
+        lastBox = .null
+        if cache != nil, cacheKey == currentKey, cacheVersion == store.version { return }
+        let format = UIGraphicsImageRendererFormat.default()
+        format.opaque = false
+        cache = UIGraphicsImageRenderer(bounds: bounds, format: format).image { r in
+            traitCollection.performAsCurrent {
+                ElementRenderer.dark = traitCollection.userInterfaceStyle == .dark
+                r.cgContext.translateBy(x: offset.x, y: offset.y)
+                r.cgContext.scaleBy(x: scale, y: scale)
+                drawScene(r.cgContext)
+            }
+        }
+        cacheKey = currentKey
+        cacheVersion = store.version
+    }
+
+    private func segmentBox(_ a: CGPoint, _ b: CGPoint) -> CGRect {
+        let w = (live?.width ?? 3) * (live?.brush.widthScale ?? 1) * scale
+        let pad = w * 1.6 + 6
+        return CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
+            .insetBy(dx: -pad, dy: -pad)
+    }
+
+    private func liveBox(_ e: Element) -> CGRect {
+        let b = e.bounds
+        return CGRect(x: b.minX * scale + offset.x, y: b.minY * scale + offset.y, width: b.width * scale, height: b.height * scale)
+            .insetBy(dx: -190, dy: -190)
+    }
+
+    private func compact(_ e: Element) -> Element {
+        var out = e
+        let idx = ShapeRecognizer.keep(e.points, 0.15 / scale)
+        out.points = idx.map { e.points[$0] }
+        out.widths = idx.map { e.widths[min($0, e.widths.count - 1)] }
+        if e.brush == .fountain || e.brush == .brush, out.widths.count > 6 {
+            for i in 0..<4 {
+                let k = 0.4 + 0.15 * CGFloat(i)
+                out.widths[i] *= k
+                out.widths[out.widths.count - 1 - i] *= k
+            }
+        }
+        return out
+    }
+
     private func selectionBounds() -> CGRect? {
-        let boxes = store.elements.filter { store.selection.contains($0.id) }.map(\.bounds)
+        let boxes = store.elements.filter { store.selection.contains($0.id) }.map { box($0) }
         guard let first = boxes.first else { return nil }
         return boxes.dropFirst().reduce(first) { $0.union($1) }
     }
@@ -264,16 +425,41 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
     override func draw(_ rect: CGRect) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
         ElementRenderer.dark = traitCollection.userInterfaceStyle == .dark
+        if let snap = gestureSnap {
+            let k = scale / snapScale
+            ctx.translateBy(x: offset.x - snapOffset.x * k, y: offset.y - snapOffset.y * k)
+            ctx.scaleBy(x: k, y: k)
+            snap.draw(in: bounds)
+            return
+        }
+        if let image = cache, cacheKey == currentKey, cacheVersion == store.version {
+            image.draw(in: bounds)
+            ctx.translateBy(x: offset.x, y: offset.y)
+            ctx.scaleBy(x: scale, y: scale)
+            if let l = live { ElementRenderer.draw(l, in: ctx) }
+            if store.tool == .move, let b = selectionBounds() { highlight(ctx, b.insetBy(dx: -6, dy: -6)) }
+            if let m = marquee { highlight(ctx, m) }
+            return
+        }
         ctx.translateBy(x: offset.x, y: offset.y)
         ctx.scaleBy(x: scale, y: scale)
+        drawScene(ctx)
+        if let l = live { ElementRenderer.draw(l, in: ctx) }
+        if store.tool == .move, let b = selectionBounds() { highlight(ctx, b.insetBy(dx: -6, dy: -6)) }
+        if let m = marquee { highlight(ctx, m) }
+    }
+
+    private func drawScene(_ ctx: CGContext) {
         drawBackground(ctx)
         let pad = 100 / scale
         let visible = CGRect(x: -offset.x / scale, y: -offset.y / scale, width: bounds.width / scale, height: bounds.height / scale)
             .insetBy(dx: -pad, dy: -pad)
-        for e in store.elements where e.bounds.intersects(visible) { ElementRenderer.draw(e, in: ctx) }
-        if let l = live { ElementRenderer.draw(l, in: ctx) }
-        if store.tool == .move, let b = selectionBounds() { highlight(ctx, b.insetBy(dx: -6, dy: -6)) }
-        if let m = marquee { highlight(ctx, m) }
+        let tiny = 0.6 / scale
+        for e in store.elements {
+            let b = box(e)
+            guard b.intersects(visible), b.width > tiny || b.height > tiny else { continue }
+            ElementRenderer.draw(e, in: ctx)
+        }
     }
 
     private func drawBackground(_ ctx: CGContext) {
