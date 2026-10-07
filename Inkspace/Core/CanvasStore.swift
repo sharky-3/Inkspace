@@ -139,6 +139,39 @@ final class CanvasStore: ObservableObject {
         elements.removeAll { selection.contains($0.id) }
         selection = []
     }
+    
+    func flipSelection(horizontal: Bool) {
+        let chosen = elements.filter { selection.contains($0.id) }
+        guard let first = chosen.first else { return }
+        let box = chosen.dropFirst().reduce(first.bounds) { $0.union($1.bounds) }
+        let sx = box.minX + box.maxX
+        let sy = box.minY + box.maxY
+
+        func mirror(_ p: CGPoint) -> CGPoint {
+            horizontal ? CGPoint(x: sx - p.x, y: p.y) : CGPoint(x: p.x, y: sy - p.y)
+        }
+
+        commit()
+        var all = elements
+        for i in all.indices where selection.contains(all[i].id) {
+            var e = all[i]
+            let b = e.bounds
+            if e.kind == .template {
+                let a = e.points[0], c = e.points[1]
+                let area = CGRect(x: min(a.x, c.x), y: min(a.y, c.y), width: abs(a.x - c.x), height: abs(a.y - c.y))
+                e.points = e.template.points(in: area)
+                e.kind = .polygon
+            }
+            e.points = e.points.map(mirror)
+            if e.kind == .text || e.kind == .image {
+                e.rect.origin = horizontal
+                    ? CGPoint(x: sx - b.maxX, y: e.rect.origin.y)
+                    : CGPoint(x: e.rect.origin.x, y: sy - b.maxY)
+            }
+            all[i] = e
+        }
+        elements = all
+    }
 
     func duplicateSelection() {
         commit()
