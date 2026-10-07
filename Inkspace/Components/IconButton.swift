@@ -8,8 +8,8 @@ struct IconLabel: View {
         Image(systemName: icon)
             .font(.system(size: 18))
             .frame(width: 44, height: 44)
-            .foregroundStyle(active ? Color.white : Color.black)
-            .background(active ? Color.black : Color.clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .foregroundStyle(active ? Color(uiColor: .systemBackground) : Color.primary)
+            .background(active ? Color.primary : Color.clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .contentShape(Rectangle())
     }
 }

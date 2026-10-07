@@ -11,7 +11,7 @@ struct ColorSwatch: View {
                 .fill(Color(uiColor: color))
                 .frame(width: 28, height: 28)
                 .padding(4)
-                .overlay(Circle().stroke(Color.black, lineWidth: selected ? 1.5 : 0))
+                .overlay(Circle().stroke(Color.primary, lineWidth: selected ? 1.5 : 0))
         }
     }
 }

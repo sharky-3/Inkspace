@@ -2,12 +2,20 @@ import UIKit
 
 enum ElementRenderer {
     static let pointsPerCm: CGFloat = 52
+    static var dark = false
+
+    private static func ink(_ c: UIColor) -> UIColor {
+        guard dark else { return c }
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
+        c.getRed(&r, green: &g, blue: &b, alpha: nil)
+        return (r + g + b) / 3 < 0.25 ? UIColor(white: 0.96, alpha: 1) : c
+    }
 
     static func draw(_ e: Element, in ctx: CGContext) {
         ctx.saveGState()
         defer { ctx.restoreGState() }
         let width = e.width * e.brush.widthScale
-        ctx.setStrokeColor(e.color.withAlphaComponent(e.brush.alpha).cgColor)
+        ctx.setStrokeColor(ink(e.color).withAlphaComponent(e.brush.alpha).cgColor)
         ctx.setLineCap(e.brush.cap)
         ctx.setLineJoin(.round)
         ctx.setLineWidth(width)
@@ -38,10 +46,14 @@ enum ElementRenderer {
             ctx.addLines(between: e.points)
             ctx.closePath()
             ctx.strokePath()
+        case .template:
+            ctx.addLines(between: e.template.points(in: span(e)))
+            ctx.closePath()
+            ctx.strokePath()
         case .ruler:
             drawRuler(e, in: ctx)
         case .text:
-            (e.text as NSString).draw(at: e.rect.origin, withAttributes: [.font: e.font, .foregroundColor: e.color])
+            (e.text as NSString).draw(at: e.rect.origin, withAttributes: [.font: e.font, .foregroundColor: ink(e.color)])
         case .image:
             e.image?.draw(in: e.rect)
         }
@@ -79,7 +91,7 @@ enum ElementRenderer {
         let label = String(format: "%.1f cm   %.0f°", length / pointsPerCm, angle)
         let attrs: [NSAttributedString.Key: Any] = [
             .font: UIFont.monospacedSystemFont(ofSize: 14, weight: .medium),
-            .foregroundColor: e.color
+            .foregroundColor: ink(e.color)
         ]
         (label as NSString).draw(at: CGPoint(x: (a.x + b.x) / 2 + 10, y: (a.y + b.y) / 2 + 10), withAttributes: attrs)
     }

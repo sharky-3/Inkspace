@@ -4,8 +4,7 @@ import SwiftUI
 struct InkspaceApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .preferredColorScheme(.light)
+            RootView()
                 .statusBarHidden()
                 .persistentSystemOverlays(.hidden)
         }

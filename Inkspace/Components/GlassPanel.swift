@@ -5,8 +5,8 @@ struct GlassPanel: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(Color.black.opacity(0.08)))
+            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(Color.primary.opacity(0.08)))
             .shadow(color: .black.opacity(0.08), radius: 20, y: 8)
     }
 }

@@ -12,9 +12,9 @@ struct Chip: View {
                 .font(font)
                 .padding(.horizontal, 12)
                 .frame(height: 36)
-                .foregroundStyle(selected ? Color.white : Color.black)
-                .background(selected ? Color.black : Color.clear, in: Capsule())
-                .overlay(Capsule().stroke(Color.black.opacity(0.15)))
+                .foregroundStyle(selected ? Color(uiColor: .systemBackground) : Color.primary)
+                .background(selected ? Color.primary : Color.clear, in: Capsule())
+                .overlay(Capsule().stroke(Color.primary.opacity(0.15)))
         }
     }
 }

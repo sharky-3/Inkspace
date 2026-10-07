@@ -8,11 +8,11 @@ struct ValueSlider: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: icon).frame(width: 24)
-            Slider(value: $value, in: range).tint(.black)
+            Slider(value: $value, in: range).tint(.primary)
             Text("\(Int(value))")
                 .font(.system(size: 13, weight: .medium, design: .monospaced))
                 .frame(width: 32, alignment: .trailing)
         }
-        .foregroundStyle(.black)
+        .foregroundStyle(.primary)
     }
 }

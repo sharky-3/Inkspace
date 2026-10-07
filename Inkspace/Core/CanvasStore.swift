@@ -6,23 +6,37 @@ final class CanvasStore: ObservableObject {
     @Published var undoStack: [[Element]] = []
     @Published var redoStack: [[Element]] = []
     @Published var tool: Tool = .brush
-    @Published var brush: Brush = .fountain
-    @Published var color: UIColor = Theme.palette[0]
-    @Published var width: CGFloat = 3
-    @Published var fontFamily = Theme.fonts[0]
-    @Published var fontSize: CGFloat = 28
+    @Published var brush: Brush = .fountain {
+        didSet { restyle { if ![.text, .image, .ruler].contains($0.kind) { $0.brush = brush } } }
+    }
+    @Published var color: UIColor = Theme.palette[0] {
+        didSet { restyle { if $0.kind != .image { $0.color = color } } }
+    }
+    @Published var width: CGFloat = 3 {
+        didSet { restyle { if ![.text, .image].contains($0.kind) { $0.width = width } } }
+    }
+    @Published var fontFamily = Theme.fonts[0] {
+        didSet { restyle { if $0.kind == .text { $0.fontFamily = fontFamily } } }
+    }
+    @Published var fontSize: CGFloat = 28 {
+        didSet { restyle { if $0.kind == .text { $0.fontSize = fontSize } } }
+    }
     @Published var background: Background = .dots
-    @Published var scale: CGFloat = 1
+    @Published var scale: CGFloat = 0.8
     @Published var textRequest: CGPoint?
     @Published var isLoading = true
+    @Published var shape: Tool = .line
+    @Published var editorOpen = false
+    @Published var template: ShapeTemplate = .triangle
+    @Published var selection: Set<UUID> = []
 
+    var noteID: UUID?
     var offset = CGPoint.zero
     var center = CGPoint.zero
     var resetView: (() -> Void)?
 
     private var bag = Set<AnyCancellable>()
     private let saveTrigger = PassthroughSubject<Void, Never>()
-    private var started = false
     private var loaded = false
 
     init() {
@@ -39,14 +53,20 @@ final class CanvasStore: ObservableObject {
         .store(in: &bag)
     }
 
-    func load() {
-        guard !started else { return }
-        started = true
+    func open(_ id: UUID) {
+        persist()
+        noteID = id
+        loaded = false
+        isLoading = true
+        elements = []
+        undoStack = []
+        redoStack = []
+        selection = []
+        offset = .zero
+        scale = 0.8
         Task {
-            let begin = Date()
-            let snapshot = await Task.detached(priority: .userInitiated) { Persistence.load() }.value
-            let remaining = 0.9 - Date().timeIntervalSince(begin)
-            if remaining > 0 { try? await Task.sleep(for: .seconds(remaining)) }
+            let snapshot = await Task.detached(priority: .userInitiated) { Persistence.load(id) }.value
+            guard noteID == id else { return }
             if let snapshot { apply(snapshot) }
             loaded = true
             isLoading = false
@@ -67,8 +87,8 @@ final class CanvasStore: ObservableObject {
     func requestSave() { saveTrigger.send() }
 
     func persist() {
-        guard loaded else { return }
-        Persistence.save(snapshot())
+        guard loaded, let id = noteID else { return }
+        Persistence.save(id, snapshot())
     }
 
     func exportData() -> Data {
@@ -83,6 +103,55 @@ final class CanvasStore: ObservableObject {
         return true
     }
 
+    var isEditing: Bool { tool == .move && !selection.isEmpty }
+    var selectionKind: Element.Kind? { elements.first { selection.contains($0.id) }?.kind }
+    private var lastEdit = Date.distantPast
+
+    private func restyle(_ change: (inout Element) -> Void) {
+        guard isEditing else { return }
+        if Date().timeIntervalSince(lastEdit) > 1 { commit() }
+        lastEdit = Date()
+        var all = elements
+        for i in all.indices where selection.contains(all[i].id) { change(&all[i]) }
+        elements = all
+    }
+
+    func chooseShape(_ s: Tool, template t: ShapeTemplate? = nil) {
+        if let t { template = t }
+        guard isEditing else {
+            shape = s
+            tool = s
+            return
+        }
+        guard s != .ruler else { return }
+        let kind: Element.Kind = s == .line ? .line : s == .rectangle ? .rectangle : s == .ellipse ? .ellipse : .template
+        let chosen = template
+        restyle {
+            if [.line, .rectangle, .ellipse, .template].contains($0.kind) {
+                $0.kind = kind
+                $0.template = chosen
+            }
+        }
+    }
+
+    func deleteSelection() {
+        commit()
+        elements.removeAll { selection.contains($0.id) }
+        selection = []
+    }
+
+    func duplicateSelection() {
+        commit()
+        let copies = elements.filter { selection.contains($0.id) }.map { e -> Element in
+            var c = e
+            c.id = UUID()
+            c.move(by: CGSize(width: 24, height: 24))
+            return c
+        }
+        elements.append(contentsOf: copies)
+        selection = Set(copies.map(\.id))
+    }
+
     func commit() {
         undoStack.append(elements)
         redoStack.removeAll()
@@ -90,6 +159,7 @@ final class CanvasStore: ObservableObject {
 
     func undo() {
         guard let previous = undoStack.popLast() else { return }
+        selection = []
         redoStack.append(elements)
         elements = previous
     }
@@ -134,7 +204,7 @@ final class CanvasStore: ObservableObject {
         let w = min(size.width, 400)
         let h = w * size.height / size.width
         var e = Element(kind: .image)
-        e.image = image
+        e.image = image.preparingForDisplay() ?? image
         e.imageData = data
         e.rect = CGRect(x: center.x - w / 2, y: center.y - h / 2, width: w, height: h)
         add(e)

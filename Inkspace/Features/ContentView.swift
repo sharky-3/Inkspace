@@ -1,12 +1,12 @@
 import SwiftUI
-import PhotosUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @StateObject private var store = CanvasStore()
+    @ObservedObject var store: CanvasStore
+    let onClose: () -> Void
     @Environment(\.scenePhase) private var phase
+    @AppStorage("barRight") private var barRight = true
     @State private var draft = ""
-    @State private var item: PhotosPickerItem?
     @State private var document = NoteDocument()
     @State private var exporting = false
     @State private var importing = false
@@ -15,32 +15,31 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             CanvasView(store: store).ignoresSafeArea()
-            VStack {
-                TopBar(store: store, item: $item, onExport: export, onImport: { importing = true })
-                Spacer()
-                VStack(spacing: 12) {
-                    SettingsPanel(store: store)
-                    ToolBar(store: store)
+                .overlay(alignment: .bottom) { SelectionBar(store: store).padding(24) }
+            VStack(spacing: 0) {
+                TopBar(store: store, onClose: onClose, onExport: export, onImport: { importing = true })
+                HStack(alignment: .center, spacing: 10) {
+                    if barRight { Spacer(minLength: 0) }
+                    if !barRight { ToolBar(store: store, barRight: barRight) }
+                    editor
+                    if barRight { ToolBar(store: store, barRight: barRight) }
+                    if !barRight { Spacer(minLength: 0) }
                 }
+                .frame(maxHeight: .infinity)
+                .animation(.snappy, value: store.editorOpen)
             }
             .padding(16)
             if store.isLoading {
-                LoadingView().transition(.opacity).zIndex(1)
+                ZStack {
+                    Color(uiColor: .systemBackground).ignoresSafeArea()
+                    ProgressView()
+                }
+                .zIndex(1)
             }
         }
         .animation(.easeOut(duration: 0.4), value: store.isLoading)
-        .task { store.load() }
         .onChange(of: phase) { _, new in
             if new != .active { store.persist() }
-        }
-        .onChange(of: item) { _, new in
-            guard let new else { return }
-            Task {
-                if let data = try? await new.loadTransferable(type: Data.self), let image = UIImage(data: data) {
-                    store.addImage(image)
-                }
-                item = nil
-            }
         }
         .fileExporter(isPresented: $exporting, document: document, contentType: .json, defaultFilename: "Inkspace Backup") { _ in }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
@@ -65,6 +64,14 @@ struct ContentView: View {
                 draft = ""
             }
             Button("Cancel", role: .cancel) { draft = "" }
+        }
+    }
+
+    @ViewBuilder private var editor: some View {
+        if store.editorOpen {
+            EditorPanel(store: store)
+                .padding(.vertical, 10)
+                .transition(.move(edge: barRight ? .trailing : .leading).combined(with: .opacity))
         }
     }
 

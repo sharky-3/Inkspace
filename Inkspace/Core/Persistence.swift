@@ -15,54 +15,71 @@ nonisolated enum Persistence {
     private static let interval: TimeInterval = 600
     private static let keep = 10
 
-    private static var folder: URL {
-        fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    private static var root: URL { fm.urls(for: .documentDirectory, in: .userDomainMask)[0] }
+    private static var legacy: URL { root.appendingPathComponent("note.json") }
+
+    private static func file(_ id: UUID) -> URL {
+        let dir = root.appendingPathComponent("Notes", isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("\(id.uuidString).json")
     }
 
-    private static var url: URL { folder.appendingPathComponent("note.json") }
-    private static var corrupt: URL { folder.appendingPathComponent("note.corrupt.json") }
-    private static var backups: URL { folder.appendingPathComponent("Backups", isDirectory: true) }
+    private static func backupDir(_ id: UUID) -> URL {
+        root.appendingPathComponent("Backups", isDirectory: true).appendingPathComponent(id.uuidString, isDirectory: true)
+    }
 
-    private static func decode(_ file: URL) -> Snapshot? {
-        guard let data = try? Data(contentsOf: file) else { return nil }
+    static func adoptLegacy(as id: UUID) -> Bool {
+        guard fm.fileExists(atPath: legacy.path) else { return false }
+        return (try? fm.moveItem(at: legacy, to: file(id))) != nil
+    }
+
+    static func remove(_ id: UUID) {
+        try? fm.removeItem(at: file(id))
+        try? fm.removeItem(at: backupDir(id))
+    }
+
+    private static func decode(_ url: URL) -> Snapshot? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(Snapshot.self, from: data)
     }
 
-    private static func backupFiles() -> [URL] {
-        let files = (try? fm.contentsOfDirectory(at: backups, includingPropertiesForKeys: nil)) ?? []
-        return files
-            .filter { $0.pathExtension == "json" }
-            .sorted { $0.lastPathComponent > $1.lastPathComponent }
+    private static func backupFiles(_ id: UUID) -> [URL] {
+        let files = (try? fm.contentsOfDirectory(at: backupDir(id), includingPropertiesForKeys: nil)) ?? []
+        return files.filter { $0.pathExtension == "json" }.sorted { $0.lastPathComponent > $1.lastPathComponent }
     }
 
-    static func load() -> Snapshot? {
+    static func load(_ id: UUID) -> Snapshot? {
+        let url = file(id)
         if let snapshot = decode(url) { return snapshot }
         if fm.fileExists(atPath: url.path) {
-            try? fm.removeItem(at: corrupt)
-            try? fm.moveItem(at: url, to: corrupt)
+            let bad = url.appendingPathExtension("corrupt")
+            try? fm.removeItem(at: bad)
+            try? fm.moveItem(at: url, to: bad)
         }
-        for file in backupFiles() {
-            if let snapshot = decode(file) { return snapshot }
+        for backup in backupFiles(id) {
+            if let snapshot = decode(backup) { return snapshot }
         }
         return nil
     }
 
-    static func save(_ snapshot: Snapshot) {
+    static func save(_ id: UUID, _ snapshot: Snapshot) {
         queue.async {
             guard let data = try? JSONEncoder().encode(snapshot) else { return }
-            rotateBackups()
-            try? data.write(to: url, options: .atomic)
+            rotate(id)
+            try? data.write(to: file(id), options: .atomic)
         }
     }
 
-    private static func rotateBackups() {
+    private static func rotate(_ id: UUID) {
+        let url = file(id)
         guard fm.fileExists(atPath: url.path) else { return }
-        try? fm.createDirectory(at: backups, withIntermediateDirectories: true)
+        let dir = backupDir(id)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         let now = Date().timeIntervalSince1970
-        if let newest = backupFiles().first,
+        if let newest = backupFiles(id).first,
            let stamp = TimeInterval(newest.deletingPathExtension().lastPathComponent.dropFirst(5)),
            now - stamp < interval { return }
-        try? fm.copyItem(at: url, to: backups.appendingPathComponent("note-\(Int(now)).json"))
-        for old in backupFiles().dropFirst(keep) { try? fm.removeItem(at: old) }
+        try? fm.copyItem(at: url, to: dir.appendingPathComponent("note-\(Int(now)).json"))
+        for old in backupFiles(id).dropFirst(keep) { try? fm.removeItem(at: old) }
     }
 }

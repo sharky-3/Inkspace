@@ -1,7 +1,7 @@
 import UIKit
 
 enum Tool: String, CaseIterable, Identifiable {
-    case brush, eraser, move, line, rectangle, ellipse, ruler, text
+    case brush, eraser, move, line, rectangle, ellipse, ruler, template, text
 
     var id: String { rawValue }
 
@@ -9,16 +9,18 @@ enum Tool: String, CaseIterable, Identifiable {
         switch self {
         case .brush: "pencil.tip"
         case .eraser: "eraser"
-        case .move: "hand.point.up.left"
+        case .move: "cursorarrow"
         case .line: "line.diagonal"
         case .rectangle: "rectangle"
         case .ellipse: "circle"
         case .ruler: "ruler"
+        case .template: "triangle"
         case .text: "textformat"
         }
     }
 
-    var isShape: Bool { [.line, .rectangle, .ellipse, .ruler].contains(self) }
+    var title: String { rawValue.capitalized }
+    var isShape: Bool { [.line, .rectangle, .ellipse, .ruler, .template].contains(self) }
 }
 
 nonisolated enum Brush: String, CaseIterable, Identifiable, Codable {
@@ -69,7 +71,7 @@ nonisolated enum Brush: String, CaseIterable, Identifiable, Codable {
 }
 
 nonisolated struct Element: Identifiable {
-    nonisolated enum Kind: String, Codable { case stroke, line, rectangle, ellipse, polygon, ruler, text, image }
+    nonisolated enum Kind: String, Codable { case stroke, line, rectangle, ellipse, polygon, template, ruler, text, image }
 
     var id = UUID()
     var kind: Kind
@@ -84,6 +86,7 @@ nonisolated struct Element: Identifiable {
     var image: UIImage?
     var imageData: Data?
     var rect: CGRect = .zero
+    var template: ShapeTemplate = .triangle
 }
 
 nonisolated extension Element {
@@ -122,7 +125,7 @@ nonisolated extension Element {
 
 nonisolated extension Element: Codable {
     enum CodingKeys: String, CodingKey {
-        case id, kind, points, widths, color, width, brush, text, fontFamily, fontSize, imageData, rect
+        case id, kind, points, widths, color, width, brush, text, fontFamily, fontSize, imageData, rect, template
     }
 
     init(from decoder: Decoder) throws {
@@ -139,8 +142,9 @@ nonisolated extension Element: Codable {
         fontFamily = try c.decode(String.self, forKey: .fontFamily)
         fontSize = try c.decode(CGFloat.self, forKey: .fontSize)
         rect = try c.decode(CGRect.self, forKey: .rect)
+        template = try c.decodeIfPresent(ShapeTemplate.self, forKey: .template) ?? .triangle
         imageData = try c.decodeIfPresent(Data.self, forKey: .imageData)
-        image = imageData.flatMap { UIImage(data: $0) }
+        image = imageData.flatMap { UIImage(data: $0)?.preparingForDisplay() }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -158,6 +162,7 @@ nonisolated extension Element: Codable {
         try c.encode(fontFamily, forKey: .fontFamily)
         try c.encode(fontSize, forKey: .fontSize)
         try c.encode(rect, forKey: .rect)
+        try c.encode(template, forKey: .template)
         try c.encodeIfPresent(imageData, forKey: .imageData)
     }
 }
@@ -183,5 +188,45 @@ nonisolated enum Background: String, CaseIterable, Identifiable, Codable {
         case .lines: "line.3.horizontal"
         case .grid: "square.grid.3x3"
         }
+    }
+}
+
+nonisolated enum ShapeTemplate: String, CaseIterable, Identifiable, Codable {
+    case triangle, rightTriangle, diamond, pentagon, hexagon, star, arrow, cross, trapezoid, parallelogram
+
+    var id: String { rawValue }
+    var title: String { self == .rightTriangle ? "Right angle" : rawValue.capitalized }
+
+    private func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x, y: y) }
+
+    private func ring(_ n: Int) -> [CGPoint] {
+        (0..<n).map { i -> CGPoint in
+            let a: CGFloat = -CGFloat.pi / 2 + 2 * CGFloat.pi * CGFloat(i) / CGFloat(n)
+            return p(0.5 + 0.5 * cos(a), 0.5 + 0.5 * sin(a))
+        }
+    }
+
+    private var unit: [CGPoint] {
+        switch self {
+        case .triangle: [p(0.5, 0), p(1, 1), p(0, 1)]
+        case .rightTriangle: [p(0, 0), p(1, 1), p(0, 1)]
+        case .diamond: [p(0.5, 0), p(1, 0.5), p(0.5, 1), p(0, 0.5)]
+        case .pentagon: ring(5)
+        case .hexagon: ring(6)
+        case .star:
+            (0..<10).map { i -> CGPoint in
+                let r: CGFloat = i % 2 == 0 ? 0.5 : 0.2
+                let a: CGFloat = -CGFloat.pi / 2 + CGFloat.pi * CGFloat(i) / 5
+                return p(0.5 + r * cos(a), 0.5 + r * sin(a))
+            }
+        case .arrow: [p(0, 0.35), p(0.6, 0.35), p(0.6, 0), p(1, 0.5), p(0.6, 1), p(0.6, 0.65), p(0, 0.65)]
+        case .cross: [p(0.35, 0), p(0.65, 0), p(0.65, 0.35), p(1, 0.35), p(1, 0.65), p(0.65, 0.65), p(0.65, 1), p(0.35, 1), p(0.35, 0.65), p(0, 0.65), p(0, 0.35), p(0.35, 0.35)]
+        case .trapezoid: [p(0.25, 0), p(0.75, 0), p(1, 1), p(0, 1)]
+        case .parallelogram: [p(0.25, 0), p(1, 0), p(0.75, 1), p(0, 1)]
+        }
+    }
+
+    func points(in r: CGRect) -> [CGPoint] {
+        unit.map { CGPoint(x: r.minX + $0.x * r.width, y: r.minY + $0.y * r.height) }
     }
 }

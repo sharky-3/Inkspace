@@ -10,10 +10,10 @@ enum ShapeRecognizer {
 
         if gap > 0.8 * length {
             let deviation = pts.map { lineDistance($0, a, b) }.max() ?? 0
-            if deviation < 0.06 * gap + 3 / scale { return (.line, [a, b]) }
-            return nil
+            if deviation < 0.08 * gap + 4 / scale { return (.line, [a, b]) }
+            return (.stroke, smooth(pts))
         }
-        guard gap < 0.25 * length else { return nil }
+        guard gap < 0.25 * length else { return (.stroke, smooth(pts)) }
 
         let corners = [CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.maxY)]
         let e = ellipseError(pts, box)
@@ -26,7 +26,35 @@ enum ShapeRecognizer {
         if let f = v.first, let l = v.last, dist(f, l) < eps * 2 { v.removeLast() }
         v = dropFlat(v)
         if (3...6).contains(v.count) { return (.polygon, v) }
-        return nil
+        return (.stroke, smooth(pts))
+    }
+
+    private static func smooth(_ pts: [CGPoint]) -> [CGPoint] {
+        let box = bounds(pts)
+        let v = simplify(pts, 0.012 * max(box.width, box.height))
+        guard v.count > 2 else { return v }
+        var out: [CGPoint] = []
+        for i in 0..<(v.count - 1) {
+            let p0 = v[max(i - 1, 0)], p1 = v[i], p2 = v[i + 1], p3 = v[min(i + 2, v.count - 1)]
+            for s in 0..<12 {
+                out.append(spline(p0, p1, p2, p3, CGFloat(s) / 12))
+            }
+        }
+        out.append(v[v.count - 1])
+        return out
+    }
+
+    private static func spline(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint, _ d: CGPoint, _ t: CGFloat) -> CGPoint {
+        let t2 = t * t
+        let t3 = t2 * t
+        func axis(_ p0: CGFloat, _ p1: CGFloat, _ p2: CGFloat, _ p3: CGFloat) -> CGFloat {
+            let k1: CGFloat = 2 * p1
+            let k2: CGFloat = (p2 - p0) * t
+            let k3: CGFloat = (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2
+            let k4: CGFloat = (3 * p1 - p0 - 3 * p2 + p3) * t3
+            return 0.5 * (k1 + k2 + k3 + k4)
+        }
+        return CGPoint(x: axis(a.x, b.x, c.x, d.x), y: axis(a.y, b.y, c.y, d.y))
     }
 
     private static func bounds(_ p: [CGPoint]) -> CGRect {
