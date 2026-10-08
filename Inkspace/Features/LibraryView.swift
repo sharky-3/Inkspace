@@ -16,16 +16,20 @@ struct LibraryView: View {
     @State private var importFailed = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-            switch page {
-            case .settings: SettingsView()
-            case .about: AboutView()
-            default: grid
+        ZStack {
+            Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
+            HStack(spacing: 0) {
+                sidebar
+                Rectangle().fill(Color.primary.opacity(0.08)).frame(width: 1)
+                pane
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(uiColor: .systemBackground))
             }
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Color.primary.opacity(0.08)))
+            .shadow(color: .black.opacity(0.06), radius: 24, y: 10)
+            .padding(28)
         }
-        .background(Dark.ground.ignoresSafeArea())
-        .environment(\.colorScheme, .dark)
         .alert("Name", isPresented: Binding(get: { naming != nil }, set: { if !$0 { naming = nil } })) {
             TextField("Name", text: $draft)
             Button("Save") { commitName() }
@@ -99,10 +103,35 @@ struct LibraryView: View {
         open(id)
     }
 
+    @ViewBuilder private var pane: some View {
+        switch page {
+        case .settings: SettingsView()
+        case .about: AboutView()
+        default: grid
+        }
+    }
+
+    private func heading(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(.system(size: 11, weight: .medium))
+            .tracking(0.6)
+            .foregroundStyle(Color.secondary)
+            .padding(.horizontal, 12)
+            .padding(.top, 14)
+            .padding(.bottom, 4)
+    }
+
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            AppLogo(size: 40).padding(.bottom, 28)
-            SidebarRow(icon: "square.grid.2x2", title: "Notes", selected: page == .all) { page = .all }
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 10) {
+                AppLogo(size: 30)
+                Text("Inkspace").font(.system(size: 17, weight: .semibold)).foregroundStyle(Color.primary)
+            }
+            .padding(.horizontal, 6)
+            .padding(.bottom, 14)
+            heading("Library")
+            SidebarRow(icon: "square.grid.2x2", title: "Notes & Files", selected: page == .all) { page = .all }
+            if !library.data.folders.isEmpty { heading("Folders") }
             ForEach(library.data.folders) { f in
                 SidebarRow(icon: "folder", title: f.name, selected: page == .folder(f.id)) { page = .folder(f.id) }
                     .contextMenu {
@@ -113,29 +142,30 @@ struct LibraryView: View {
                     }
             }
             Spacer()
-            Rectangle().fill(Dark.line).frame(height: 1).padding(.vertical, 8)
+            heading("App")
             SidebarRow(icon: "gearshape", title: "Settings", selected: page == .settings) { page = .settings }
             SidebarRow(icon: "info.circle", title: "About", selected: page == .about) { page = .about }
         }
-        .padding(24)
-        .frame(width: 250)
+        .padding(16)
+        .frame(width: 240)
+        .background(Color(uiColor: .secondarySystemBackground))
     }
 
     private var grid: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            HStack(spacing: 10) {
-                Text("Notes & Files").foregroundStyle(Dark.dim)
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(spacing: 8) {
+                Text("Notes & Files").foregroundStyle(Color.primary)
                 if let id = folderID, let f = library.data.folders.first(where: { $0.id == id }) {
-                    Text("/ \(f.name)").foregroundStyle(Color.white)
+                    Text("/ \(f.name)").foregroundStyle(Color.secondary)
                 }
                 Spacer()
                 Chip(title: "New folder", selected: false) { naming = .folder }
-                Chip(title: "New note", selected: true) { open(library.newNote(in: folderID)) }
                 Chip(title: "Add file", selected: false) { importingFile = true }
+                Chip(title: "New note", selected: true) { open(library.newNote(in: folderID)) }
             }
-            .font(.system(size: 28, weight: .semibold))
+            .font(.system(size: 22, weight: .semibold))
             ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 20)], spacing: 20) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 16)], spacing: 16) {
                     ForEach(notes) { n in
                         NoteCard(note: n) { open(n.id) }
                             .contextMenu {
@@ -155,7 +185,7 @@ struct LibraryView: View {
                 }
             }
         }
-        .padding(32)
+        .padding(28)
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }

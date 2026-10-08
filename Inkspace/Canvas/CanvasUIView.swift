@@ -23,6 +23,7 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
     private var snapOffset = CGPoint.zero
     private var activeGestures = 0
     private var lastTime: TimeInterval = 0
+    private var lastDot: (UUID, Date)?
 
     private var scale: CGFloat {
         get { store.scale }
@@ -58,6 +59,11 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
             g.delegate = self
             addGestureRecognizer(g)
         }
+        let pencil = UITapGestureRecognizer(target: self, action: #selector(onPencilDouble(_:)))
+        pencil.numberOfTapsRequired = 2
+        pencil.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        pencil.delegate = self
+        addGestureRecognizer(pencil)
         store.resetView = { [weak self] in self?.resetZoom() }
     }
 
@@ -93,11 +99,26 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
     }
 
     @objc private func onDoubleTap(_ g: UITapGestureRecognizer) {
-        if g.numberOfTouchesRequired == fingers("undoFingers", 2) { store.undo() }
+        if g.numberOfTouchesRequired == fingers("undoFingers", 2), fingers("undoTaps", 2) == 2 { store.undo() }
     }
 
     @objc private func onSingleTap(_ g: UITapGestureRecognizer) {
-        if g.numberOfTouchesRequired == fingers("editorFingers", 3) { store.editorOpen.toggle() }
+        let n = g.numberOfTouchesRequired
+        if n == fingers("undoFingers", 2), fingers("undoTaps", 2) == 1 {
+            store.undo()
+            return
+        }
+        if n == fingers("editorFingers", 3) { store.toggleMenu(at: g.location(in: self)) }
+    }
+
+    @objc private func onPencilDouble(_ g: UITapGestureRecognizer) {
+        guard UserDefaults.standard.object(forKey: "pencilMenu") as? Bool ?? true else { return }
+        if let dot = lastDot, Date().timeIntervalSince(dot.1) < 1, store.elements.last?.id == dot.0 {
+            store.elements.removeLast()
+            _ = store.undoStack.popLast()
+        }
+        lastDot = nil
+        store.toggleMenu(at: g.location(in: self))
     }
 
     @objc private func onPan(_ g: UIPanGestureRecognizer) {
@@ -151,6 +172,7 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
     }
 
     private func armHold(_ p: CGPoint) {
+        guard UserDefaults.standard.object(forKey: "holdSnap") as? Bool ?? true else { return }
         holdAnchor = p
         holdWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.snap() }
@@ -268,6 +290,7 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
             let valid = cache != nil && cacheKey == currentKey && cacheVersion == store.version
             store.commit()
             store.elements.append(l)
+            if l.kind == .stroke, l.points.count <= 4 { lastDot = (l.id, Date()) }
             if valid, let old = cache {
                 let format = UIGraphicsImageRendererFormat.default()
                 format.opaque = false

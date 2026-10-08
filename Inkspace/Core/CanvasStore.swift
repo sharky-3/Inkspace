@@ -173,6 +173,18 @@ final class CanvasStore: ObservableObject {
         Snapshot(elements: elements, offset: offset, scale: scale, background: background, showGrid: nil)
     }
 
+    var menuAnchor: CGPoint?
+
+    func toggleMenu(at point: CGPoint) {
+        if editorOpen {
+            editorOpen = false
+            return
+        }
+        let atTap = UserDefaults.standard.object(forKey: "menuAtTap") as? Bool ?? true
+        menuAnchor = atTap ? point : nil
+        editorOpen = true
+    }
+
     func requestSave() { saveTrigger.send() }
 
     func persist() {

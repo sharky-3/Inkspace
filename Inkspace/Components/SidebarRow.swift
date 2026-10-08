@@ -8,16 +8,17 @@ struct SidebarRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: icon).frame(width: 20)
-                Text(title).lineLimit(1)
+            HStack(spacing: 10) {
+                Image(systemName: icon).font(.system(size: 14)).frame(width: 20)
+                Text(title).font(.system(size: 14, weight: selected ? .medium : .regular)).lineLimit(1)
                 Spacer()
             }
-            .font(.system(size: 15))
             .padding(.horizontal, 12)
-            .frame(height: 40)
-            .foregroundStyle(selected ? Color.white : Dark.dim)
-            .background(selected ? Color.white.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .frame(height: 36)
+            .foregroundStyle(selected ? Color.primary : Color.primary.opacity(0.7))
+            .background(selected ? Color(uiColor: .systemBackground) : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.primary.opacity(selected ? 0.08 : 0)))
+            .shadow(color: .black.opacity(selected ? 0.05 : 0), radius: 3, y: 1)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

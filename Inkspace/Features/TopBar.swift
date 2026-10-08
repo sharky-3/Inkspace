@@ -35,6 +35,7 @@ struct TopBar: View {
             }
             .padding(6)
             .glass()
+            .environment(\.colorScheme, .dark)
             
             Spacer()
             
@@ -50,6 +51,7 @@ struct TopBar: View {
                 .padding(.horizontal, 14)
                 .frame(height: 56)
                 .glass(22)
+                .environment(\.colorScheme, .dark)
             
             HStack(spacing: 2) {
                 
@@ -89,6 +91,7 @@ struct TopBar: View {
             }
             .padding(6)
             .glass()
+            .environment(\.colorScheme, .dark)
         }
     }
     

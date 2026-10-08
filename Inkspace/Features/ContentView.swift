@@ -20,9 +20,8 @@ struct ContentView: View {
                 TopBar(store: store, onClose: onClose, onExport: export, onImport: { importing = true })
                 HStack(alignment: .center, spacing: 10) {
                     if barRight { Spacer(minLength: 0) }
-                    if !barRight { ToolBar(store: store, barRight: barRight) }
-                    editor
-                    if barRight { ToolBar(store: store, barRight: barRight) }
+                    if !barRight { EditorMenu(store: store, flip: false, mode: .card) }
+                    if barRight { EditorMenu(store: store, flip: true, mode: .card) }
                     if !barRight { Spacer(minLength: 0) }
                 }
                 .frame(maxHeight: .infinity)
@@ -38,6 +37,8 @@ struct ContentView: View {
             }
         }
         .animation(.easeOut(duration: 0.4), value: store.isLoading)
+        .overlay { menuOverlay }
+        .animation(.snappy, value: store.editorOpen)
         .onChange(of: phase) { _, new in
             if new != .active { store.persist() }
         }
@@ -67,11 +68,24 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder private var editor: some View {
+    @ViewBuilder private var menuOverlay: some View {
         if store.editorOpen {
-            EditorPanel(store: store)
-                .padding(.vertical, 10)
-                .transition(.move(edge: barRight ? .trailing : .leading).combined(with: .opacity))
+            GeometryReader { geo in
+                let w = geo.size.width
+                let h = geo.size.height
+                let a = store.menuAnchor ?? CGPoint(x: w / 2, y: h / 2)
+                let x = min(max(a.x, 60), w - 60)
+                let y = min(max(a.y, 250), h - 250)
+                ZStack {
+                    Color.black.opacity(0.15)
+                        .ignoresSafeArea()
+                        .onTapGesture { store.editorOpen = false }
+                    EditorMenu(store: store, flip: x > w - 420, mode: .rail)
+                        .position(x: x, y: y)
+                }
+            }
+            .ignoresSafeArea()
+            .transition(.opacity)
         }
     }
 
