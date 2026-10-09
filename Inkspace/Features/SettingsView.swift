@@ -58,7 +58,6 @@ struct SettingsView: View {
     @AppStorage("undoTaps") private var undoTaps = 2
     @AppStorage("undoFingers") private var undoFingers = 2
     @AppStorage("editorFingers") private var editorFingers = 3
-    @AppStorage("pencilMenu") private var pencilMenu = true
     @AppStorage("menuAtTap") private var menuAtTap = true
     @AppStorage("holdSnap") private var holdSnap = true
     @AppStorage("keepAwake") private var keepAwake = true
@@ -81,9 +80,6 @@ struct SettingsView: View {
                 }
                 row("Editor menu fingers", "Tap the canvas with this many fingers to open the editor menu") {
                     DropdownField(options: [2, 3, 4], label: { "\($0) fingers" }, selection: $editorFingers)
-                }
-                row("Pencil double tap", "Open the editor menu by tapping twice with Apple Pencil") {
-                    Toggle("", isOn: $pencilMenu).labelsHidden().tint(.blue)
                 }
                 row("Menu position", "Open the editor menu where you tap, or in the center of the screen") {
                     MiniSegment(items: [true, false], title: { $0 ? "At tap" : "Center" }, selection: $menuAtTap)

@@ -59,11 +59,6 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
             g.delegate = self
             addGestureRecognizer(g)
         }
-        let pencil = UITapGestureRecognizer(target: self, action: #selector(onPencilDouble(_:)))
-        pencil.numberOfTapsRequired = 2
-        pencil.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
-        pencil.delegate = self
-        addGestureRecognizer(pencil)
         store.resetView = { [weak self] in self?.resetZoom() }
     }
 
@@ -109,16 +104,6 @@ final class CanvasUIView: UIView, UIGestureRecognizerDelegate {
             return
         }
         if n == fingers("editorFingers", 3) { store.toggleMenu(at: g.location(in: self)) }
-    }
-
-    @objc private func onPencilDouble(_ g: UITapGestureRecognizer) {
-        guard UserDefaults.standard.object(forKey: "pencilMenu") as? Bool ?? true else { return }
-        if let dot = lastDot, Date().timeIntervalSince(dot.1) < 1, store.elements.last?.id == dot.0 {
-            store.elements.removeLast()
-            _ = store.undoStack.popLast()
-        }
-        lastDot = nil
-        store.toggleMenu(at: g.location(in: self))
     }
 
     @objc private func onPan(_ g: UIPanGestureRecognizer) {
