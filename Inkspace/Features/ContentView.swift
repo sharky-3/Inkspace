@@ -12,33 +12,32 @@ struct ContentView: View {
     @State private var importing = false
     @State private var restoreFailed = false
 
+    private let radius: CGFloat = 50
+
     var body: some View {
-        ZStack {
-            CanvasView(store: store).ignoresSafeArea()
-                .overlay(alignment: .bottom) { SelectionBar(store: store).padding(24) }
-            VStack(spacing: 0) {
-                TopBar(store: store, onClose: onClose, onExport: export, onImport: { importing = true })
-                HStack(alignment: .center, spacing: 10) {
-                    if barRight { Spacer(minLength: 0) }
-                    if !barRight { EditorMenu(store: store, flip: false, mode: .card) }
-                    if barRight { EditorMenu(store: store, flip: true, mode: .card) }
-                    if !barRight { Spacer(minLength: 0) }
+        GeometryReader { geo in
+            let safe = geo.safeAreaInsets
+            let edge = barRight ? safe.trailing : safe.leading
+            let span = SideBar.width + edge
+            ZStack(alignment: barRight ? .trailing : .leading) {
+                Color.black
+                canvas(safe: safe)
+                    .padding(barRight ? .trailing : .leading, span)
+                SideBar(store: store, right: barRight, top: safe.top, bottom: safe.bottom, onClose: onClose)
+                    .frame(width: span)
+                if store.isLoading {
+                    ZStack {
+                        Color.black
+                        ProgressView().tint(.white)
+                    }
+                    .zIndex(1)
                 }
-                .frame(maxHeight: .infinity)
-                .animation(.snappy, value: store.editorOpen)
             }
-            .padding(16)
-            if store.isLoading {
-                ZStack {
-                    Color(uiColor: .systemBackground).ignoresSafeArea()
-                    ProgressView()
-                }
-                .zIndex(1)
-            }
+            .ignoresSafeArea()
         }
+        .animation(.spring(response: 0.5, dampingFraction: 0.85), value: barRight)
+        .animation(.spring(response: 0.45, dampingFraction: 0.84), value: store.editorOpen)
         .animation(.easeOut(duration: 0.4), value: store.isLoading)
-        .overlay { menuOverlay }
-        .animation(.snappy, value: store.editorOpen)
         .onChange(of: phase) { _, new in
             if new != .active { store.persist() }
         }
@@ -68,25 +67,29 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder private var menuOverlay: some View {
-        if store.editorOpen {
-            GeometryReader { geo in
-                let w = geo.size.width
-                let h = geo.size.height
-                let a = store.menuAnchor ?? CGPoint(x: w / 2, y: h / 2)
-                let x = min(max(a.x, 60), w - 60)
-                let y = min(max(a.y, 250), h - 250)
-                ZStack {
-                    Color.black.opacity(0.15)
-                        .ignoresSafeArea()
-                        .onTapGesture { store.editorOpen = false }
-                    EditorMenu(store: store, flip: x > w - 420, mode: .rail)
-                        .position(x: x, y: y)
+    private var canvasShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: barRight ? 0 : radius,
+            bottomLeadingRadius: barRight ? 0 : radius,
+            bottomTrailingRadius: barRight ? radius : 0,
+            topTrailingRadius: barRight ? radius : 0,
+            style: .continuous
+        )
+    }
+
+    private func canvas(safe: EdgeInsets) -> some View {
+        CanvasView(store: store)
+            .clipShape(canvasShape)
+            .overlay(alignment: .bottom) { SelectionBar(store: store).padding(24) }
+            .overlay(alignment: barRight ? .trailing : .leading) {
+                if store.editorOpen {
+                    EditorSheet(store: store, onExport: export, onImport: { importing = true })
+                        .padding(14)
+                        .padding(.top, safe.top)
+                        .padding(.bottom, safe.bottom)
+                        .transition(.move(edge: barRight ? .trailing : .leading).combined(with: .opacity))
                 }
             }
-            .ignoresSafeArea()
-            .transition(.opacity)
-        }
     }
 
     private func export() {
